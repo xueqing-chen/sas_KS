@@ -1,0 +1,96 @@
+
+
+%MACRO KSStat(DSin, ProbVar, DVVar, DSKS, M_KS);
+/* Calculation of the KS Statistic from the results of  a predictive model. DSin is the dataset with a dependent  variable DVVar, and a predicted probability ProbVar. 
+   The KS statistic is returnd in the parameter M_KS. DSKS contains the data of the Lorenz curve for good and bad as well as the KS Curve. 
+*/
+
+	/* Sort the observations using the predicted probability */
+	PROC SORT DATA = &DSin;
+			BY &ProbVar;
+	RUN;
+
+
+	/* Find the total number of positives and negatives */
+	PROC SQL NOPRINT;
+			SELECT SUM(&DVVar), COUNT(*) INTO :Positive,  :Total FROM &DSin;			
+	QUIT;
+	%LET Positive = &Positive;
+	%LET Total = &Total;
+	%LET Negative = %EVAL(&Total - &Positive);
+ 
+
+ 	/* The base of calculation is percentile */
+	/* Count number of positive and negatives for each percentile, their proportions and cumulative proportions */
+	DATA &DSKS;
+			SET &Dsin NOBS=Total_Cnt;
+			BY &ProbVar;
+			
+			RETAIN Group_Index 1  Group_Positive_Cnt  0 Group_Negative_Cnt 0;
+			
+			Group_Size=Total_Cnt/100;
+
+			IF &DVVar=1 THEN Group_Positive_Cnt+1;
+			ELSE Group_Negative_Cnt +1;
+
+			/* end of tile? */
+			IF _N_ = CEIL(Group_Index*Group_Size) OR _N_ = Total_Cnt THEN DO;
+					Group_Postive_Portion=Group_Positive_Cnt/&Positive;
+					Group_Negative_Portion =Group_Negative_Cnt/&Negative;
+  					OUTPUT;
+   					IF Group_Index <100 THEN DO;
+         						Group_Index +1;
+	   				END;
+  			END;	
+			KEEP Group_Index   Group_Postive_Portion   Group_Negative_Portion;
+	RUN;
+
+	/* add the point of zero  */
+	DATA temp_zhu_ks;
+	 		Group_Index=0;
+	 		Group_Postive_Portion=0;
+	 		Group_Negative_Portion=0;
+	RUN;
+
+	Data &DSKS;
+  			SET temp_zhu_ks &DSKS;
+	RUN;
+
+	/* Scale the tile to represent percentage and add labels*/
+	DATA &DSKS;
+			SET &DSKS;
+			Group_Index=Group_Index/100;
+			LABEL Group_Postive_Portion='Percent of Positives';
+			LABEL Group_Negative_Portion ='Percent of Negatives';
+			LABEL Group_Index ='Percent of population';
+
+			/* calculate the KS Curve */
+			KS=Group_Negative_Portion-Group_Postive_Portion;
+	RUN;
+
+	/* calculate the KS statistic */
+	PROC SQL NOPRINT;
+ 			SELECT MAX(ABS(KS)) INTO :&M_KS FROM &DSKS;			
+	QUIT;
+	
+	/* Clean the workspace */
+	PROC DATASETS LIBRARY=WORK NODETAILS NOLIST;
+ 		DELETE temp_zhu_ks ;
+	RUN;
+
+
+	 Plotting the KS curve using gplot using simple options 
+	ODS GRAPHICS ON;
+	symbol1 value=dot color=red   interpol=join  height=1;
+ 	legend1 position=top;
+ 	symbol2 value=dot color=blue  interpol=join  height=1;
+ 	symbol3 value=dot color=green interpol=join  height=1;
+	PROC GPLOT DATA=&DSKS;
+			TITLE "THE KS Statistic is: &M_KS";
+ 			PLOT( Group_Negative_Portion Group_Postive_Portion KS)*Group_Index /OVERLAY LEGEND=legend1;
+ 	RUN;
+
+	GOPTIONS RESET=ALL;
+	TITLE '';
+	ODS GRAPHICS OFF;
+%MEND;
